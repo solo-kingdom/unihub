@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   Table,
   Button,
@@ -12,7 +12,6 @@ import {
   Tag,
   Popconfirm,
   App,
-  Spin,
 } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
@@ -43,16 +42,6 @@ export default function DatasourcePage() {
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
 
-  // Namespace auto-query states (for Aerospike)
-  const [namespaceOptions, setNamespaceOptions] = useState<{ value: string; label: string }[]>([])
-  const [namespaceLoading, setNamespaceLoading] = useState(false)
-  const [namespaceError, setNamespaceError] = useState<string | null>(null)
-  const namespaceDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
-
-  // Watch form fields for namespace auto-query
-  const watchedHost = Form.useWatch('config_host', form)
-  const watchedPort = Form.useWatch('config_port', form)
-
   // Filter states
   const [filterTypeId, setFilterTypeId] = useState<string>('')
   const [filterImplId, setFilterImplId] = useState<string>('')
@@ -76,8 +65,8 @@ export default function DatasourcePage() {
     try {
       const res = await datasourceApi.listTypes()
       setTypes(res.data || [])
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error('获取数据源类型失败:', err)
     }
   }
 
@@ -105,84 +94,17 @@ export default function DatasourcePage() {
 
   const currentImplMeta = availableImpls.find((impl) => impl.id === selectedImplId)
 
-  // Populate config fields when editing and impl metadata is available
-  useEffect(() => {
-    if (modalOpen && editingDs && currentImplMeta) {
-      const configValues: Record<string, string> = {}
-      currentImplMeta.configFields.forEach((field) => {
-        configValues[`config_${field.name}`] = editingDs.config[field.name] || field.default || ''
-      })
-      form.setFieldsValue(configValues)
-    }
-  }, [modalOpen, editingDs, currentImplMeta, form])
-
-  // 清空命名空间查询状态
-  const clearNamespaceState = useCallback(() => {
-    setNamespaceOptions([])
-    setNamespaceLoading(false)
-    setNamespaceError(null)
-    if (namespaceDebounceRef.current) {
-      clearTimeout(namespaceDebounceRef.current)
-      namespaceDebounceRef.current = null
-    }
-  }, [])
-
-  // 当选中 Aerospike 且 host/port 都有值时，自动查询命名空间
-  useEffect(() => {
-    if (selectedImplId !== 'aerospike') {
-      clearNamespaceState()
-      return
-    }
-
-    const host = watchedHost
-    const port = watchedPort
-    if (!host || port === undefined || port === null || port === '') {
-      clearNamespaceState()
-      return
-    }
-
-    // Debounced fetch
-    clearNamespaceState()
-    setNamespaceLoading(true)
-    namespaceDebounceRef.current = setTimeout(async () => {
-      try {
-        const res = await datasourceApi.queryAerospikeNamespaces(
-          String(host),
-          parseInt(String(port))
-        )
-        const opts = (res.data?.namespaces || []).map((ns: string) => ({ value: ns, label: ns }))
-
-        // 编辑模式下保留已保存的命名空间（如果不在查询结果中）
-        if (editingDs?.config?.namespace) {
-          const savedNs = editingDs.config.namespace
-          if (!opts.find((o: { value: string }) => o.value === savedNs)) {
-            opts.push({ value: savedNs, label: `${savedNs}（已保存）` })
-          }
-        }
-
-        setNamespaceOptions(opts)
-        setNamespaceError(null)
-      } catch (err: any) {
-        setNamespaceError(err?.response?.data?.message || '查询命名空间失败，请手动输入')
-        setNamespaceOptions([])
-      } finally {
-        setNamespaceLoading(false)
-      }
-    }, 500)
-
-    return () => {
-      if (namespaceDebounceRef.current) {
-        clearTimeout(namespaceDebounceRef.current)
-      }
-    }
-  }, [selectedImplId, watchedHost, watchedPort, editingDs, clearNamespaceState])
+  // Direct lookup helper: find implementation meta from types by typeId+implId
+  const findImplMeta = (typeId: string, implId: string): ImplementationInfo | undefined => {
+    const t = types.find(x => x.id === typeId)
+    return t?.implementations.find(i => i.id === implId)
+  }
 
   const handleOpenCreate = () => {
     setEditingDs(null)
     setSelectedTypeId('')
     setSelectedImplId('')
     setTestResult(null)
-    clearNamespaceState()
     form.resetFields()
     setModalOpen(true)
   }
@@ -192,19 +114,28 @@ export default function DatasourcePage() {
     setSelectedTypeId(ds.typeId)
     setSelectedImplId(ds.implId)
     setTestResult(null)
-    clearNamespaceState()
-    form.setFieldsValue({
+
+    // Reset and set all form values synchronously (Form is always mounted, no destroyOnHidden)
+    form.resetFields()
+    const values: Record<string, string> = {
       name: ds.name,
       typeId: ds.typeId,
       implId: ds.implId,
-    })
+    }
+    const implMeta = findImplMeta(ds.typeId, ds.implId)
+    if (implMeta) {
+      implMeta.configFields.forEach((field) => {
+        values[`config_${field.name}`] = ds.config[field.name] || field.default || ''
+      })
+    }
+    form.setFieldsValue(values)
     setModalOpen(true)
   }
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
-      const implMeta = availableImpls.find((impl) => impl.id === values.implId)
+      const implMeta = findImplMeta(values.typeId, values.implId)
       const config: Record<string, string> = {}
       if (implMeta) {
         implMeta.configFields.forEach((field) => {
@@ -249,7 +180,7 @@ export default function DatasourcePage() {
   const handleTest = async () => {
     try {
       const values = await form.validateFields()
-      const implMeta = availableImpls.find((impl) => impl.id === values.implId)
+      const implMeta = findImplMeta(values.typeId, values.implId)
       const config: Record<string, string> = {}
       if (implMeta) {
         implMeta.configFields.forEach((field) => {
@@ -263,7 +194,25 @@ export default function DatasourcePage() {
       setTestLoading(true)
       setTestResult(null)
       const res = await datasourceApi.testNew({ implId: values.implId, config })
-      setTestResult(res.data)
+
+      // For Aerospike: also query available namespaces on successful connection
+      let resultMsg = res.data.message
+      if (res.data.success && values.implId === 'aerospike') {
+        try {
+          const nsRes = await datasourceApi.queryAerospikeNamespaces(
+            String(config.host || 'localhost'),
+            parseInt(String(config.port || '3000'))
+          )
+          const nss = nsRes.data?.namespaces
+          if (nss && nss.length > 0) {
+            resultMsg += ` — 可用命名空间: ${nss.join(', ')}`
+          }
+        } catch {
+          // namespace query failed, keep original message
+        }
+      }
+
+      setTestResult({ success: res.data.success, message: resultMsg })
       if (res.data.success) {
         message.success('连接成功')
       } else {
@@ -384,7 +333,6 @@ export default function DatasourcePage() {
         onCancel={() => setModalOpen(false)}
         width={560}
         okText={editingDs ? '更新' : '创建'}
-        destroyOnHidden
       >
         <Form form={form} layout="vertical" preserve={false}>
           <Form.Item
@@ -434,7 +382,6 @@ export default function DatasourcePage() {
               onChange={(val) => {
                 setSelectedImplId(val)
                 setTestResult(null)
-                clearNamespaceState()
               }}
               disabled={!!editingDs || !selectedTypeId}
             >
@@ -446,63 +393,25 @@ export default function DatasourcePage() {
             </Select>
           </Form.Item>
 
-          {currentImplMeta && currentImplMeta.configFields.map((field) => {
-            // Aerospike namespace 字段：自动查询后显示为 Select
-            if (selectedImplId === 'aerospike' && field.name === 'namespace') {
-              return (
-                <Form.Item
-                  key={field.name}
-                  name={`config_${field.name}`}
-                  label={field.label}
-                  rules={field.required ? [{ required: true, message: `请选择${field.label}` }] : []}
-                >
-                  {namespaceOptions.length > 0 ? (
-                    <Select
-                      showSearch
-                      placeholder="请选择命名空间"
-                      loading={namespaceLoading}
-                      options={namespaceOptions}
-                      filterOption={(input, option) =>
-                        (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-                      }
-                    />
-                  ) : (
-                    <Input
-                      placeholder={
-                        namespaceLoading
-                          ? '正在查询命名空间...'
-                          : field.placeholder || `请输入${field.label}`
-                      }
-                      suffix={namespaceLoading ? <Spin size="small" /> : undefined}
-                    />
-                  )}
-                  {namespaceError && (
-                    <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{namespaceError}</div>
-                  )}
-                </Form.Item>
-              )
-            }
-
-            return (
-              <Form.Item
-                key={field.name}
-                name={`config_${field.name}`}
-                label={field.label}
-                rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
-              >
-                {field.type === 'number' ? (
-                  <InputNumber
-                    style={{ width: '100%' }}
-                    placeholder={field.placeholder || `请输入${field.label}`}
-                  />
-                ) : field.type === 'password' ? (
-                  <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
-                ) : (
-                  <Input placeholder={field.placeholder || `请输入${field.label}`} />
-                )}
-              </Form.Item>
-            )
-          })}
+          {currentImplMeta && currentImplMeta.configFields.map((field) => (
+            <Form.Item
+              key={field.name}
+              name={`config_${field.name}`}
+              label={field.label}
+              rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
+            >
+              {field.type === 'number' ? (
+                <InputNumber
+                  style={{ width: '100%' }}
+                  placeholder={field.placeholder || `请输入${field.label}`}
+                />
+              ) : field.type === 'password' ? (
+                <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
+              ) : (
+                <Input placeholder={field.placeholder || `请输入${field.label}`} />
+              )}
+            </Form.Item>
+          ))}
 
           {currentImplMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>

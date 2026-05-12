@@ -12,6 +12,7 @@ import {
   App,
   Popconfirm,
   Typography,
+  Tag,
 } from 'antd'
 import {
   PlusOutlined,
@@ -20,7 +21,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
-import { datasourceApi, dataApi, type Datasource } from '../api'
+import { datasourceApi, dataApi, type Datasource, type TestResult } from '../api'
 
 const { Text, Paragraph } = Typography
 
@@ -41,13 +42,30 @@ export default function DataQueryPage() {
   const [randomLoading, setRandomLoading] = useState(false)
   const [keyExistsWarning, setKeyExistsWarning] = useState(false)
   const [checkingKey, setCheckingKey] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState<TestResult | null>(null)
+  const [connectionLoading, setConnectionLoading] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
   const existsDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  // Namespace auto-query states (for Aerospike)
+  const [namespaceOptions, setNamespaceOptions] = useState<{ value: string; label: string }[]>([])
+  const [namespaceLoading, setNamespaceLoading] = useState(false)
+  const namespaceDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  // Derive full datasource object for config access
+  const selectedDatasource = datasources.find((d) => d.name === selectedDs)
 
   useEffect(() => {
     datasourceApi.list().then((res) => {
       setDatasources(res.data || [])
     })
+  }, [])
+
+  // Cleanup namespace debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (namespaceDebounceRef.current) clearTimeout(namespaceDebounceRef.current)
+    }
   }, [])
 
   const fetchKeys = useCallback(async (dsName: string, pattern?: string) => {
@@ -68,7 +86,48 @@ export default function DataQueryPage() {
   const handleSelectDs = (name: string) => {
     setSelectedDs(name)
     setSearchPattern('')
+    setConnectionStatus(null)
+    setNamespaceOptions([])
     fetchKeys(name)
+
+    const ds = datasources.find((d) => d.name === name)
+    if (!ds) return
+
+    // Test connection for Aerospike datasources
+    if (ds.implId === 'aerospike') {
+      setConnectionLoading(true)
+      datasourceApi.test(name).then((res) => {
+        setConnectionStatus(res.data)
+      }).catch((err) => {
+        setConnectionStatus({ success: false, message: err?.response?.data?.message || '连接测试失败' })
+      }).finally(() => {
+        setConnectionLoading(false)
+      })
+
+      // Auto-query namespaces for Aerospike
+      const host = ds.config.host || 'localhost'
+      const port = parseInt(ds.config.port || '3000')
+      if (host && port) {
+        setNamespaceLoading(true)
+        if (namespaceDebounceRef.current) clearTimeout(namespaceDebounceRef.current)
+        namespaceDebounceRef.current = setTimeout(async () => {
+          try {
+            const nsRes = await datasourceApi.queryAerospikeNamespaces(host, port)
+            const opts = (nsRes.data?.namespaces || []).map((ns: string) => ({ value: ns, label: ns }))
+            // Keep saved namespace as option if not in results
+            const savedNs = ds.config.namespace
+            if (savedNs && !opts.find(o => o.value === savedNs)) {
+              opts.push({ value: savedNs, label: `${savedNs}（已保存）` })
+            }
+            setNamespaceOptions(opts)
+          } catch {
+            // query failed, leave options empty
+          } finally {
+            setNamespaceLoading(false)
+          }
+        }, 300)
+      }
+    }
   }
 
   const handleSearchChange = (value: string) => {
@@ -203,7 +262,7 @@ export default function DataQueryPage() {
             style={{ width: 300 }}
             placeholder="请选择数据源"
             onChange={handleSelectDs}
-            value = {selectedDs || undefined}
+            value={selectedDs || undefined}
           >
             {datasources.map((ds) => (
               <Select.Option key={ds.name} value={ds.name}>
@@ -227,6 +286,35 @@ export default function DataQueryPage() {
             >
               刷新
             </Button>
+          )}
+          {/* Aerospike: namespace selector + connection status */}
+          {selectedDatasource && selectedDatasource.implId === 'aerospike' && (
+            <>
+              {namespaceOptions.length > 0 ? (
+                <Select
+                  style={{ width: 180 }}
+                  placeholder="命名空间"
+                  loading={namespaceLoading}
+                  value={selectedDatasource.config.namespace || undefined}
+                  options={namespaceOptions}
+                  filterOption={(input, option) =>
+                    (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+                  }
+                />
+              ) : (
+                <Tag color="purple">
+                  {namespaceLoading ? <Spin size="small" /> : null}
+                  ns: {selectedDatasource.config.namespace || '(未设置)'}
+                </Tag>
+              )}
+              {connectionLoading ? (
+                <Tag><Spin size="small" /> 测试中...</Tag>
+              ) : connectionStatus ? (
+                <Tag color={connectionStatus.success ? 'success' : 'error'}>
+                  {connectionStatus.success ? '已连接' : '连接失败'}
+                </Tag>
+              ) : null}
+            </>
           )}
         </Space>
       </div>
