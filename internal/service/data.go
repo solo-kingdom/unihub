@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"path"
 
 	"github.com/solo-kingdom/unihub/internal/store"
 )
@@ -64,6 +66,12 @@ func (s *DataService) Delete(ctx context.Context, dsName string, key string) err
 
 // List 列出指定数据源的所有键
 func (s *DataService) List(ctx context.Context, dsName string) ([]string, error) {
+	return s.ListKeys(ctx, dsName, "")
+}
+
+// ListKeys 列出指定数据源的键，支持 pattern 过滤
+// pattern 使用 glob 风格（如 "user:*"），为空时返回全部键
+func (s *DataService) ListKeys(ctx context.Context, dsName string, pattern string) ([]string, error) {
 	storage, err := s.manager.GetStorage(dsName)
 	if err != nil {
 		return nil, fmt.Errorf("get storage: %w", err)
@@ -74,5 +82,50 @@ func (s *DataService) List(ctx context.Context, dsName string) ([]string, error)
 		return nil, fmt.Errorf("list keys: %w", err)
 	}
 
-	return keys, nil
+	if pattern == "" {
+		return keys, nil
+	}
+
+	// Filter keys matching glob pattern
+	filtered := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if matchPattern(pattern, key) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered, nil
+}
+
+// matchPattern 使用 path.Match 进行 glob 风格的模式匹配
+func matchPattern(pattern, key string) bool {
+	matched, err := path.Match(pattern, key)
+	if err != nil {
+		return false
+	}
+	return matched
+}
+
+// RandomKey 从指定数据源中随机返回一个键名
+func (s *DataService) RandomKey(ctx context.Context, dsName string) (string, error) {
+	keys, err := s.List(ctx, dsName)
+	if err != nil {
+		return "", fmt.Errorf("list keys: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return "", fmt.Errorf("no keys available in datasource %s", dsName)
+	}
+
+	idx := rand.Intn(len(keys))
+	return keys[idx], nil
+}
+
+// Exists 检查指定键是否存在于数据源中
+func (s *DataService) Exists(ctx context.Context, dsName string, key string) (bool, error) {
+	storage, err := s.manager.GetStorage(dsName)
+	if err != nil {
+		return false, fmt.Errorf("get storage: %w", err)
+	}
+
+	return storage.Exists(ctx, key)
 }

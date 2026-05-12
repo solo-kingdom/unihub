@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   Table,
   Button,
@@ -17,40 +17,49 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
   datasourceApi,
   type Datasource,
-  type DatasourceTypeMeta,
+  type TypeInfo,
+  type ImplementationInfo,
   type TestResult,
 } from '../api'
 
-const typeColors: Record<string, string> = {
-  'kv-redis': 'red',
-  'kv-boltdb': 'blue',
-  'kv-aerospike': 'purple',
-  'config-consul': 'green',
+const implColors: Record<string, string> = {
+  redis: 'red',
+  boltdb: 'blue',
+  aerospike: 'purple',
+  consul: 'green',
 }
 
 export default function DatasourcePage() {
   const { modal } = App.useApp()
   const [datasources, setDatasources] = useState<Datasource[]>([])
-  const [types, setTypes] = useState<DatasourceTypeMeta[]>([])
+  const [types, setTypes] = useState<TypeInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingDs, setEditingDs] = useState<Datasource | null>(null)
   const [form] = Form.useForm()
-  const [selectedType, setSelectedType] = useState<string>('')
+  const [selectedTypeId, setSelectedTypeId] = useState<string>('')
+  const [selectedImplId, setSelectedImplId] = useState<string>('')
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
 
-  const fetchDatasources = async () => {
+  // Filter states
+  const [filterTypeId, setFilterTypeId] = useState<string>('')
+  const [filterImplId, setFilterImplId] = useState<string>('')
+
+  const fetchDatasources = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await datasourceApi.list()
+      const params: { typeId?: string; implId?: string } = {}
+      if (filterTypeId) params.typeId = filterTypeId
+      if (filterImplId) params.implId = filterImplId
+      const res = await datasourceApi.list(params)
       setDatasources(res.data || [])
     } catch {
       message.error('获取数据源列表失败')
     } finally {
       setLoading(false)
     }
-  }
+  }, [filterTypeId, filterImplId])
 
   const fetchTypes = async () => {
     try {
@@ -64,13 +73,42 @@ export default function DatasourcePage() {
   useEffect(() => {
     fetchDatasources()
     fetchTypes()
-  }, [])
+  }, [fetchDatasources])
 
-  const currentTypeMeta = types.find((t) => t.type === selectedType)
+  // Refetch when filters change
+  useEffect(() => {
+    fetchDatasources()
+  }, [filterTypeId, filterImplId, fetchDatasources])
+
+  // Available implementations based on selected type
+  const availableImpls: ImplementationInfo[] = selectedTypeId
+    ? types.find((t) => t.id === selectedTypeId)?.implementations || []
+    : []
+
+  // Build lookup maps
+  const typeMap = Object.fromEntries(types.map((t) => [t.id, t.name]))
+  const implMap: Record<string, string> = {}
+  types.forEach((t) => t.implementations.forEach((impl) => {
+    implMap[impl.id] = impl.name
+  }))
+
+  const currentImplMeta = availableImpls.find((impl) => impl.id === selectedImplId)
+
+  // Populate config fields when editing and impl metadata is available
+  useEffect(() => {
+    if (modalOpen && editingDs && currentImplMeta) {
+      const configValues: Record<string, string> = {}
+      currentImplMeta.configFields.forEach((field) => {
+        configValues[`config_${field.name}`] = editingDs.config[field.name] || field.default || ''
+      })
+      form.setFieldsValue(configValues)
+    }
+  }, [modalOpen, editingDs, currentImplMeta, form])
 
   const handleOpenCreate = () => {
     setEditingDs(null)
-    setSelectedType('')
+    setSelectedTypeId('')
+    setSelectedImplId('')
     setTestResult(null)
     form.resetFields()
     setModalOpen(true)
@@ -78,31 +116,24 @@ export default function DatasourcePage() {
 
   const handleOpenEdit = (ds: Datasource) => {
     setEditingDs(ds)
-    setSelectedType(ds.type)
+    setSelectedTypeId(ds.typeId)
+    setSelectedImplId(ds.implId)
     setTestResult(null)
     form.setFieldsValue({
       name: ds.name,
-      type: ds.type,
+      typeId: ds.typeId,
+      implId: ds.implId,
     })
-    // Set config field values
-    const typeMeta = types.find((t) => t.type === ds.type)
-    if (typeMeta) {
-      const configValues: Record<string, string> = {}
-      typeMeta.configFields.forEach((field) => {
-        configValues[`config_${field.name}`] = ds.config[field.name] || field.default || ''
-      })
-      form.setFieldsValue(configValues)
-    }
     setModalOpen(true)
   }
 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields()
-      const typeMeta = types.find((t) => t.type === values.type)
+      const implMeta = availableImpls.find((impl) => impl.id === values.implId)
       const config: Record<string, string> = {}
-      if (typeMeta) {
-        typeMeta.configFields.forEach((field) => {
+      if (implMeta) {
+        implMeta.configFields.forEach((field) => {
           const val = values[`config_${field.name}`]
           if (val !== undefined && val !== '') {
             config[field.name] = String(val)
@@ -116,7 +147,8 @@ export default function DatasourcePage() {
       } else {
         await datasourceApi.create({
           name: values.name,
-          type: values.type,
+          typeId: values.typeId,
+          implId: values.implId,
           config,
         })
         message.success('创建成功')
@@ -143,10 +175,10 @@ export default function DatasourcePage() {
   const handleTest = async () => {
     try {
       const values = await form.validateFields()
-      const typeMeta = types.find((t) => t.type === values.type)
+      const implMeta = availableImpls.find((impl) => impl.id === values.implId)
       const config: Record<string, string> = {}
-      if (typeMeta) {
-        typeMeta.configFields.forEach((field) => {
+      if (implMeta) {
+        implMeta.configFields.forEach((field) => {
           const val = values[`config_${field.name}`]
           if (val !== undefined && val !== '') {
             config[field.name] = String(val)
@@ -156,7 +188,7 @@ export default function DatasourcePage() {
 
       setTestLoading(true)
       setTestResult(null)
-      const res = await datasourceApi.testNew({ type: values.type, config })
+      const res = await datasourceApi.testNew({ implId: values.implId, config })
       setTestResult(res.data)
       if (res.data.success) {
         message.success('连接成功')
@@ -180,12 +212,17 @@ export default function DatasourcePage() {
     },
     {
       title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      render: (type: string) => {
-        const meta = types.find((t) => t.type === type)
-        return <Tag color={typeColors[type] || 'default'}>{meta?.name || type}</Tag>
-      },
+      dataIndex: 'typeId',
+      key: 'typeId',
+      render: (typeId: string) => typeMap[typeId] || typeId,
+    },
+    {
+      title: '实现',
+      dataIndex: 'implId',
+      key: 'implId',
+      render: (implId: string) => (
+        <Tag color={implColors[implId] || 'default'}>{implMap[implId] || implId}</Tag>
+      ),
     },
     {
       title: '创建时间',
@@ -219,13 +256,43 @@ export default function DatasourcePage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate}>
-          新增数据源
-        </Button>
-        <Button icon={<ReloadOutlined />} onClick={fetchDatasources} loading={loading}>
-          刷新
-        </Button>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <Space wrap>
+          <Select
+            allowClear
+            placeholder="类型"
+            style={{ width: 140 }}
+            value={filterTypeId || undefined}
+            onChange={(val) => {
+              setFilterTypeId(val || '')
+              if (!val) setFilterImplId('')
+            }}
+            options={types.map((t) => ({ value: t.id, label: t.name }))}
+          />
+          <Select
+            allowClear
+            placeholder="实现"
+            style={{ width: 140 }}
+            value={filterImplId || undefined}
+            onChange={(val) => setFilterImplId(val || '')}
+            options={
+              filterTypeId
+                ? types.find((t) => t.id === filterTypeId)?.implementations.map((impl) => ({
+                    value: impl.id,
+                    label: impl.name,
+                  })) || []
+                : types.flatMap((t) => t.implementations.map((impl) => ({ value: impl.id, label: impl.name })))
+            }
+          />
+        </Space>
+        <Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate}>
+            新增数据源
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={fetchDatasources} loading={loading}>
+            刷新
+          </Button>
+        </Space>
       </div>
 
       <Table
@@ -243,8 +310,9 @@ export default function DatasourcePage() {
         onCancel={() => setModalOpen(false)}
         width={560}
         okText={editingDs ? '更新' : '创建'}
+        destroyOnHidden
       >
-        <Form form={form} layout="vertical" disabled={!!editingDs}>
+        <Form form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="name"
             label="名称"
@@ -254,50 +322,76 @@ export default function DatasourcePage() {
           </Form.Item>
 
           <Form.Item
-            name="type"
+            name="typeId"
             label="类型"
             rules={[{ required: true, message: '请选择数据源类型' }]}
           >
             <Select
               placeholder="选择数据源类型"
               onChange={(val) => {
-                setSelectedType(val)
+                setSelectedTypeId(val)
+                setSelectedImplId('')
                 setTestResult(null)
+                form.setFieldValue('implId', undefined)
+                // Clear config fields
+                availableImpls.forEach((impl) => {
+                  impl.configFields.forEach((field) => {
+                    form.setFieldValue(`config_${field.name}`, undefined)
+                  })
+                })
               }}
               disabled={!!editingDs}
             >
               {types.map((t) => (
-                <Select.Option key={t.type} value={t.type}>
-                  {t.name} ({t.category})
+                <Select.Option key={t.id} value={t.id}>
+                  {t.name} ({t.interface})
                 </Select.Option>
               ))}
             </Select>
           </Form.Item>
-        </Form>
 
-        {currentTypeMeta && (
-          <Form form={form} layout="vertical">
-            {currentTypeMeta.configFields.map((field) => (
-              <Form.Item
-                key={field.name}
-                name={`config_${field.name}`}
-                label={field.label}
-                rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
-              >
-                {field.type === 'number' ? (
-                  <InputNumber
-                    style={{ width: '100%' }}
-                    placeholder={field.placeholder || `请输入${field.label}`}
-                    defaultValue={field.default ? Number(field.default) : undefined}
-                  />
-                ) : field.type === 'password' ? (
-                  <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
-                ) : (
-                  <Input placeholder={field.placeholder || `请输入${field.label}`} />
-                )}
-              </Form.Item>
-            ))}
+          <Form.Item
+            name="implId"
+            label="实现"
+            rules={[{ required: true, message: '请选择实现' }]}
+          >
+            <Select
+              placeholder={selectedTypeId ? '选择实现' : '请先选择类型'}
+              onChange={(val) => {
+                setSelectedImplId(val)
+                setTestResult(null)
+              }}
+              disabled={!!editingDs || !selectedTypeId}
+            >
+              {availableImpls.map((impl) => (
+                <Select.Option key={impl.id} value={impl.id}>
+                  {impl.name}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
 
+          {currentImplMeta && currentImplMeta.configFields.map((field) => (
+            <Form.Item
+              key={field.name}
+              name={`config_${field.name}`}
+              label={field.label}
+              rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
+            >
+              {field.type === 'number' ? (
+                <InputNumber
+                  style={{ width: '100%' }}
+                  placeholder={field.placeholder || `请输入${field.label}`}
+                />
+              ) : field.type === 'password' ? (
+                <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
+              ) : (
+                <Input placeholder={field.placeholder || `请输入${field.label}`} />
+              )}
+            </Form.Item>
+          ))}
+
+          {currentImplMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
               <Button onClick={handleTest} loading={testLoading}>
                 测试连接
@@ -306,8 +400,8 @@ export default function DatasourcePage() {
                 <Tag color={testResult.success ? 'success' : 'error'}>{testResult.message}</Tag>
               )}
             </div>
-          </Form>
-        )}
+          )}
+        </Form>
       </Modal>
     </div>
   )

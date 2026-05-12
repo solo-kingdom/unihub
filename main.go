@@ -81,10 +81,12 @@ func main() {
 			r.Post("/test", dsHandler.TestConnection)
 
 			// 数据操作
+			r.Get("/keys/random", dataHandler.RandomKey)
+			r.Get("/keys", dataHandler.ListKeys)
 			r.Get("/data", dataHandler.Get)
+			r.Head("/data", dataHandler.Exists)
 			r.Put("/data", dataHandler.Set)
 			r.Delete("/data", dataHandler.Delete)
-			r.Get("/keys", dataHandler.ListKeys)
 		})
 	})
 

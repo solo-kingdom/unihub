@@ -39,8 +39,8 @@ func (m *Manager) GetStorage(name string) (KVStorage, error) {
 		return nil, fmt.Errorf("get datasource %q: %w", name, err)
 	}
 
-	// 根据类型创建存储实例
-	storage, err := CreateKVStorage(ds.Type, ds.Config)
+	// 根据实现创建存储实例
+	storage, err := CreateKVStorage(ds.ImplID, ds.Config)
 	if err != nil {
 		return nil, fmt.Errorf("create storage for %q: %w", name, err)
 	}
@@ -78,14 +78,14 @@ func (m *Manager) TestConnection(name string) (*model.DatasourceTestResult, erro
 	if err != nil {
 		return nil, fmt.Errorf("get datasource %q: %w", name, err)
 	}
-	return storeTestConnection(ds.Type, ds.Config)
+	return storeTestConnection(ds.ImplID, ds.Config)
 }
 
 // TestNewConnection 测试新数据源（尚未注册）的连接
-func (m *Manager) TestNewConnection(dsType model.DatasourceType, config map[string]string) (*model.DatasourceTestResult, error) {
-	return storeTestConnection(dsType, config)
+func (m *Manager) TestNewConnection(implID string, config map[string]string) (*model.DatasourceTestResult, error) {
+	return storeTestConnection(implID, config)
 }
 
-func storeTestConnection(dsType model.DatasourceType, config map[string]string) (*model.DatasourceTestResult, error) {
-	return TestConnection(dsType, config)
+func storeTestConnection(implID string, config map[string]string) (*model.DatasourceTestResult, error) {
+	return TestConnection(implID, config)
 }

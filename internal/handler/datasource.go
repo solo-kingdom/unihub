@@ -21,7 +21,9 @@ func NewDatasourceHandler(svc *service.DatasourceService) *DatasourceHandler {
 
 // List 列出所有数据源 GET /api/v1/datasources
 func (h *DatasourceHandler) List(w http.ResponseWriter, r *http.Request) {
-	list, err := h.svc.List()
+	typeID := r.URL.Query().Get("typeId")
+	implID := r.URL.Query().Get("implId")
+	list, err := h.svc.List(typeID, implID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
 		return
@@ -118,15 +120,15 @@ func (h *DatasourceHandler) TestConnection(w http.ResponseWriter, r *http.Reques
 // TestNewConnection 测试新数据源连接 POST /api/v1/datasources/test
 func (h *DatasourceHandler) TestNewConnection(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Type   model.DatasourceType `json:"type"`
-		Config map[string]string    `json:"config"`
+		ImplID string            `json:"implId"`
+		Config map[string]string `json:"config"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", "无效的请求体")
 		return
 	}
 
-	result, err := h.svc.TestNewConnection(req.Type, req.Config)
+	result, err := h.svc.TestNewConnection(req.ImplID, req.Config)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return

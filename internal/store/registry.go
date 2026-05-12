@@ -15,17 +15,17 @@ import (
 // KVStorage 是 uniface kv.Storage 接口的别名
 type KVStorage = kv.Storage
 
-// CreateKVStorage 根据数据源类型和配置创建对应的 KV Storage 实例
-func CreateKVStorage(dsType model.DatasourceType, config map[string]string) (KVStorage, error) {
-	switch dsType {
-	case model.TypeKVRedis:
+// CreateKVStorage 根据数据源实现标识和配置创建对应的 KV Storage 实例
+func CreateKVStorage(implID string, config map[string]string) (KVStorage, error) {
+	switch implID {
+	case "redis":
 		return createRedisStorage(config)
-	case model.TypeKVBoltDB:
+	case "boltdb":
 		return createBoltDBStorage(config)
-	case model.TypeKVAerospike:
+	case "aerospike":
 		return createAerospikeStorage(config)
 	default:
-		return nil, fmt.Errorf("unsupported datasource type: %s", dsType)
+		return nil, fmt.Errorf("unsupported datasource implementation: %s", implID)
 	}
 }
 
@@ -96,10 +96,10 @@ func createAerospikeStorage(config map[string]string) (KVStorage, error) {
 }
 
 // TestConnection 测试数据源连接
-func TestConnection(dsType model.DatasourceType, config map[string]string) (*model.DatasourceTestResult, error) {
-	switch dsType {
-	case model.TypeKVRedis, model.TypeKVBoltDB, model.TypeKVAerospike:
-		storage, err := CreateKVStorage(dsType, config)
+func TestConnection(implID string, config map[string]string) (*model.DatasourceTestResult, error) {
+	switch implID {
+	case "redis", "boltdb", "aerospike":
+		storage, err := CreateKVStorage(implID, config)
 		if err != nil {
 			return &model.DatasourceTestResult{
 				Success: false,
@@ -136,14 +136,14 @@ func TestConnection(dsType model.DatasourceType, config map[string]string) (*mod
 			Message: "连接成功",
 		}, nil
 
-	case model.TypeConfigConsul:
+	case "consul":
 		return &model.DatasourceTestResult{
 			Success: false,
 			Message: "Consul 配置中心连接测试暂未实现",
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported datasource type: %s", dsType)
+		return nil, fmt.Errorf("unsupported datasource implementation: %s", implID)
 	}
 }
 

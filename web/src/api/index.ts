@@ -12,18 +12,11 @@ const api = axios.create({
 export interface Datasource {
   id: string
   name: string
-  type: string
+  typeId: string
+  implId: string
   config: Record<string, string>
   createdAt: string
   updatedAt: string
-}
-
-export interface DatasourceTypeMeta {
-  type: string
-  name: string
-  category: string
-  capabilities: string[]
-  configFields: ConfigField[]
 }
 
 export interface ConfigField {
@@ -35,6 +28,21 @@ export interface ConfigField {
   placeholder?: string
 }
 
+export interface ImplementationInfo {
+  id: string
+  typeId: string
+  name: string
+  capabilities: string[]
+  configFields: ConfigField[]
+}
+
+export interface TypeInfo {
+  id: string
+  name: string
+  interface: string
+  implementations: ImplementationInfo[]
+}
+
 export interface TestResult {
   success: boolean
   message: string
@@ -42,17 +50,18 @@ export interface TestResult {
 
 // Datasource APIs
 export const datasourceApi = {
-  list: () => api.get<Datasource[]>('/datasources'),
+  list: (params?: { typeId?: string; implId?: string }) =>
+    api.get<Datasource[]>('/datasources', { params }),
   get: (name: string) => api.get<Datasource>(`/datasources/${name}`),
-  create: (data: { name: string; type: string; config: Record<string, string> }) =>
+  create: (data: { name: string; typeId: string; implId: string; config: Record<string, string> }) =>
     api.post<Datasource>('/datasources', data),
   update: (name: string, data: { config: Record<string, string> }) =>
     api.put<Datasource>(`/datasources/${name}`, data),
   delete: (name: string) => api.delete(`/datasources/${name}`),
   test: (name: string) => api.post<TestResult>(`/datasources/${name}/test`),
-  testNew: (data: { type: string; config: Record<string, string> }) =>
+  testNew: (data: { implId: string; config: Record<string, string> }) =>
     api.post<TestResult>('/datasources/test', data),
-  listTypes: () => api.get<DatasourceTypeMeta[]>('/datasource-types'),
+  listTypes: () => api.get<TypeInfo[]>('/datasource-types'),
 }
 
 // Data APIs
@@ -63,8 +72,14 @@ export const dataApi = {
     api.put(`/datasources/${dsName}/data`, { key, value }),
   delete: (dsName: string, key: string) =>
     api.delete(`/datasources/${dsName}/data`, { params: { key } }),
-  listKeys: (dsName: string) =>
-    api.get<{ keys: string[] }>(`/datasources/${dsName}/keys`),
+  listKeys: (dsName: string, pattern?: string) =>
+    api.get<{ keys: string[] }>(`/datasources/${dsName}/keys`, {
+      params: pattern ? { pattern } : undefined,
+    }),
+  randomKey: (dsName: string) =>
+    api.get<{ key: string }>(`/datasources/${dsName}/keys/random`),
+  exists: (dsName: string, key: string) =>
+    api.head(`/datasources/${dsName}/data`, { params: { key } }),
 }
 
 export default api

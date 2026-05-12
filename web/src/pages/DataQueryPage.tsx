@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import {
   Select,
   List,
@@ -18,6 +18,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   ReloadOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import { datasourceApi, dataApi, type Datasource } from '../api'
 
@@ -36,6 +37,12 @@ export default function DataQueryPage() {
   const [editModalOpen, setEditModalOpen] = useState(false)
   const [addForm] = Form.useForm()
   const [editForm] = Form.useForm()
+  const [searchPattern, setSearchPattern] = useState('')
+  const [randomLoading, setRandomLoading] = useState(false)
+  const [keyExistsWarning, setKeyExistsWarning] = useState(false)
+  const [checkingKey, setCheckingKey] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const existsDebounceRef = useRef<ReturnType<typeof setTimeout>>()
 
   useEffect(() => {
     datasourceApi.list().then((res) => {
@@ -43,24 +50,73 @@ export default function DataQueryPage() {
     })
   }, [])
 
-  const fetchKeys = async (dsName: string) => {
+  const fetchKeys = useCallback(async (dsName: string, pattern?: string) => {
     if (!dsName) return
     setLoading(true)
     setSelectedKey('')
     setKeyValue(null)
     try {
-      const res = await dataApi.listKeys(dsName)
+      const res = await dataApi.listKeys(dsName, pattern || undefined)
       setKeys(res.data?.keys || [])
     } catch {
       message.error('获取键列表失败')
     } finally {
       setLoading(false)
     }
-  }
+  }, [message])
 
   const handleSelectDs = (name: string) => {
     setSelectedDs(name)
+    setSearchPattern('')
     fetchKeys(name)
+  }
+
+  const handleSearchChange = (value: string) => {
+    setSearchPattern(value)
+    // Debounce server-side search
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      fetchKeys(selectedDs, value || undefined)
+    }, 300)
+  }
+
+  const handleRandomKey = async () => {
+    setRandomLoading(true)
+    try {
+      const res = await dataApi.randomKey(selectedDs)
+      const randomKey = res.data?.key
+      if (randomKey) {
+        handleSelectKey(randomKey)
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 404) {
+        message.info('当前数据源无可用数据')
+      } else {
+        message.error('获取随机键失败')
+      }
+    } finally {
+      setRandomLoading(false)
+    }
+  }
+
+  const handleKeyNameChange = (value: string) => {
+    // Debounce key existence check
+    if (existsDebounceRef.current) clearTimeout(existsDebounceRef.current)
+    if (!value) {
+      setKeyExistsWarning(false)
+      return
+    }
+    existsDebounceRef.current = setTimeout(async () => {
+      setCheckingKey(true)
+      try {
+        await dataApi.exists(selectedDs, value)
+        setKeyExistsWarning(true)
+      } catch {
+        setKeyExistsWarning(false)
+      } finally {
+        setCheckingKey(false)
+      }
+    }, 500)
   }
 
   const handleSelectKey = async (key: string) => {
@@ -151,7 +207,7 @@ export default function DataQueryPage() {
           >
             {datasources.map((ds) => (
               <Select.Option key={ds.name} value={ds.name}>
-                {ds.name} ({ds.type})
+                {ds.name} ({ds.implId})
               </Select.Option>
             ))}
           </Select>
@@ -197,7 +253,24 @@ export default function DataQueryPage() {
                 background: '#fafafa',
               }}
             >
-              键列表 ({keys.length})
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span>键列表 ({keys.length})</span>
+                <Button
+                  size="small"
+                  onClick={handleRandomKey}
+                  loading={randomLoading}
+                >
+                  🎲 随机
+                </Button>
+              </div>
+              <Input
+                size="small"
+                placeholder="搜索键名 (支持 * 通配符)"
+                prefix={<SearchOutlined />}
+                allowClear
+                value={searchPattern}
+                onChange={(e) => handleSearchChange(e.target.value)}
+              />
             </div>
             {loading ? (
               <div style={{ padding: 24, textAlign: 'center' }}>
@@ -318,7 +391,11 @@ export default function DataQueryPage() {
         title="新增键值"
         open={addModalOpen}
         onOk={handleAdd}
-        onCancel={() => setAddModalOpen(false)}
+        onCancel={() => {
+          setAddModalOpen(false)
+          setKeyExistsWarning(false)
+          addForm.resetFields()
+        }}
         okText="添加"
       >
         <Form form={addForm} layout="vertical">
@@ -326,8 +403,14 @@ export default function DataQueryPage() {
             name="key"
             label="键名"
             rules={[{ required: true, message: '请输入键名' }]}
+            validateStatus={keyExistsWarning ? 'warning' : undefined}
+            help={keyExistsWarning ? '该键名已存在，继续添加将覆盖原值' : undefined}
           >
-            <Input placeholder="请输入键名" />
+            <Input
+              placeholder="请输入键名"
+              onChange={(e) => handleKeyNameChange(e.target.value)}
+              suffix={checkingKey ? <Spin size="small" /> : undefined}
+            />
           </Form.Item>
           <Form.Item
             name="value"
