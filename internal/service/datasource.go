@@ -2,8 +2,10 @@ package service
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
+	as "github.com/aerospike/aerospike-client-go/v7"
 	"github.com/google/uuid"
 	"github.com/solo-kingdom/unihub/internal/model"
 	"github.com/solo-kingdom/unihub/internal/store"
@@ -132,4 +134,45 @@ func (s *DatasourceService) ListTypes() []model.TypeWithImplementations {
 		})
 	}
 	return result
+}
+
+// QueryAerospikeNamespaces 查询 Aerospike 节点的可用命名空间列表
+func (s *DatasourceService) QueryAerospikeNamespaces(host string, port int) ([]string, error) {
+	policy := as.NewClientPolicy()
+	policy.Timeout = 5 * time.Second
+
+	client, err := as.NewClientWithPolicy(policy, host, port)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接到 Aerospike 服务器: %w", err)
+	}
+	defer client.Close()
+
+	// 通过 Cluster 获取第一个可用节点，发送 info 命令
+	nodes := client.Cluster().GetNodes()
+	if len(nodes) == 0 {
+		return nil, fmt.Errorf("Aerospike 集群无可用节点")
+	}
+
+	infoPolicy := as.NewInfoPolicy()
+	infoMap, err := nodes[0].RequestInfo(infoPolicy, "namespaces")
+	if err != nil {
+		return nil, fmt.Errorf("查询命名空间失败: %w", err)
+	}
+
+	// 解析 namespaces 响应，格式: "namespaces\tns1;ns2;test"
+	raw, ok := infoMap["namespaces"]
+	if !ok || raw == "" {
+		return []string{}, nil
+	}
+
+	namespaces := strings.Split(raw, ";")
+	// 过滤空字符串
+	var result []string
+	for _, ns := range namespaces {
+		ns = strings.TrimSpace(ns)
+		if ns != "" {
+			result = append(result, ns)
+		}
+	}
+	return result, nil
 }

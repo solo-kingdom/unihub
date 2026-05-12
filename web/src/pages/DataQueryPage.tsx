@@ -41,8 +41,8 @@ export default function DataQueryPage() {
   const [randomLoading, setRandomLoading] = useState(false)
   const [keyExistsWarning, setKeyExistsWarning] = useState(false)
   const [checkingKey, setCheckingKey] = useState(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
-  const existsDebounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+  const existsDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
 
   useEffect(() => {
     datasourceApi.list().then((res) => {

@@ -143,6 +143,36 @@ func (h *DatasourceHandler) ListTypes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, types)
 }
 
+// QueryAerospikeNamespaces 查询 Aerospike 命名空间 POST /api/v1/datasources/aerospike/namespaces
+func (h *DatasourceHandler) QueryAerospikeNamespaces(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Host string `json:"host"`
+		Port int    `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "无效的请求体")
+		return
+	}
+	if req.Host == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "host 参数不能为空")
+		return
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		writeError(w, http.StatusBadRequest, "bad_request", "port 参数无效")
+		return
+	}
+
+	namespaces, err := h.svc.QueryAerospikeNamespaces(req.Host, req.Port)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "connection_failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"namespaces": namespaces,
+	})
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStr(s, substr))
 }

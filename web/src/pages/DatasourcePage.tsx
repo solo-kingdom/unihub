@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Table,
   Button,
@@ -12,6 +12,7 @@ import {
   Tag,
   Popconfirm,
   App,
+  Spin,
 } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
@@ -30,7 +31,7 @@ const implColors: Record<string, string> = {
 }
 
 export default function DatasourcePage() {
-  const { modal } = App.useApp()
+  App.useApp()
   const [datasources, setDatasources] = useState<Datasource[]>([])
   const [types, setTypes] = useState<TypeInfo[]>([])
   const [loading, setLoading] = useState(false)
@@ -41,6 +42,16 @@ export default function DatasourcePage() {
   const [selectedImplId, setSelectedImplId] = useState<string>('')
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
+
+  // Namespace auto-query states (for Aerospike)
+  const [namespaceOptions, setNamespaceOptions] = useState<{ value: string; label: string }[]>([])
+  const [namespaceLoading, setNamespaceLoading] = useState(false)
+  const [namespaceError, setNamespaceError] = useState<string | null>(null)
+  const namespaceDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+
+  // Watch form fields for namespace auto-query
+  const watchedHost = Form.useWatch('config_host', form)
+  const watchedPort = Form.useWatch('config_port', form)
 
   // Filter states
   const [filterTypeId, setFilterTypeId] = useState<string>('')
@@ -105,11 +116,73 @@ export default function DatasourcePage() {
     }
   }, [modalOpen, editingDs, currentImplMeta, form])
 
+  // 清空命名空间查询状态
+  const clearNamespaceState = useCallback(() => {
+    setNamespaceOptions([])
+    setNamespaceLoading(false)
+    setNamespaceError(null)
+    if (namespaceDebounceRef.current) {
+      clearTimeout(namespaceDebounceRef.current)
+      namespaceDebounceRef.current = null
+    }
+  }, [])
+
+  // 当选中 Aerospike 且 host/port 都有值时，自动查询命名空间
+  useEffect(() => {
+    if (selectedImplId !== 'aerospike') {
+      clearNamespaceState()
+      return
+    }
+
+    const host = watchedHost
+    const port = watchedPort
+    if (!host || port === undefined || port === null || port === '') {
+      clearNamespaceState()
+      return
+    }
+
+    // Debounced fetch
+    clearNamespaceState()
+    setNamespaceLoading(true)
+    namespaceDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await datasourceApi.queryAerospikeNamespaces(
+          String(host),
+          parseInt(String(port))
+        )
+        const opts = (res.data?.namespaces || []).map((ns: string) => ({ value: ns, label: ns }))
+
+        // 编辑模式下保留已保存的命名空间（如果不在查询结果中）
+        if (editingDs?.config?.namespace) {
+          const savedNs = editingDs.config.namespace
+          if (!opts.find((o: { value: string }) => o.value === savedNs)) {
+            opts.push({ value: savedNs, label: `${savedNs}（已保存）` })
+          }
+        }
+
+        setNamespaceOptions(opts)
+        setNamespaceError(null)
+      } catch (err: any) {
+        setNamespaceError(err?.response?.data?.message || '查询命名空间失败，请手动输入')
+        setNamespaceOptions([])
+      } finally {
+        setNamespaceLoading(false)
+      }
+    }, 500)
+
+    return () => {
+      if (namespaceDebounceRef.current) {
+        clearTimeout(namespaceDebounceRef.current)
+      }
+    }
+  }, [selectedImplId, watchedHost, watchedPort, editingDs, clearNamespaceState])
+
   const handleOpenCreate = () => {
     setEditingDs(null)
     setSelectedTypeId('')
     setSelectedImplId('')
     setTestResult(null)
+    clearNamespaceState()
     form.resetFields()
     setModalOpen(true)
   }
@@ -119,6 +192,7 @@ export default function DatasourcePage() {
     setSelectedTypeId(ds.typeId)
     setSelectedImplId(ds.implId)
     setTestResult(null)
+    clearNamespaceState()
     form.setFieldsValue({
       name: ds.name,
       typeId: ds.typeId,
@@ -360,6 +434,7 @@ export default function DatasourcePage() {
               onChange={(val) => {
                 setSelectedImplId(val)
                 setTestResult(null)
+                clearNamespaceState()
               }}
               disabled={!!editingDs || !selectedTypeId}
             >
@@ -371,25 +446,63 @@ export default function DatasourcePage() {
             </Select>
           </Form.Item>
 
-          {currentImplMeta && currentImplMeta.configFields.map((field) => (
-            <Form.Item
-              key={field.name}
-              name={`config_${field.name}`}
-              label={field.label}
-              rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
-            >
-              {field.type === 'number' ? (
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder={field.placeholder || `请输入${field.label}`}
-                />
-              ) : field.type === 'password' ? (
-                <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
-              ) : (
-                <Input placeholder={field.placeholder || `请输入${field.label}`} />
-              )}
-            </Form.Item>
-          ))}
+          {currentImplMeta && currentImplMeta.configFields.map((field) => {
+            // Aerospike namespace 字段：自动查询后显示为 Select
+            if (selectedImplId === 'aerospike' && field.name === 'namespace') {
+              return (
+                <Form.Item
+                  key={field.name}
+                  name={`config_${field.name}`}
+                  label={field.label}
+                  rules={field.required ? [{ required: true, message: `请选择${field.label}` }] : []}
+                >
+                  {namespaceOptions.length > 0 ? (
+                    <Select
+                      showSearch
+                      placeholder="请选择命名空间"
+                      loading={namespaceLoading}
+                      options={namespaceOptions}
+                      filterOption={(input, option) =>
+                        (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+                      }
+                    />
+                  ) : (
+                    <Input
+                      placeholder={
+                        namespaceLoading
+                          ? '正在查询命名空间...'
+                          : field.placeholder || `请输入${field.label}`
+                      }
+                      suffix={namespaceLoading ? <Spin size="small" /> : undefined}
+                    />
+                  )}
+                  {namespaceError && (
+                    <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{namespaceError}</div>
+                  )}
+                </Form.Item>
+              )
+            }
+
+            return (
+              <Form.Item
+                key={field.name}
+                name={`config_${field.name}`}
+                label={field.label}
+                rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
+              >
+                {field.type === 'number' ? (
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    placeholder={field.placeholder || `请输入${field.label}`}
+                  />
+                ) : field.type === 'password' ? (
+                  <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
+                ) : (
+                  <Input placeholder={field.placeholder || `请输入${field.label}`} />
+                )}
+              </Form.Item>
+            )
+          })}
 
           {currentImplMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>

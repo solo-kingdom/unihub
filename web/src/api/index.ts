@@ -62,6 +62,8 @@ export const datasourceApi = {
   testNew: (data: { implId: string; config: Record<string, string> }) =>
     api.post<TestResult>('/datasources/test', data),
   listTypes: () => api.get<TypeInfo[]>('/datasource-types'),
+  queryAerospikeNamespaces: (host: string, port: number) =>
+    api.post<{ namespaces: string[] }>('/datasources/aerospike/namespaces', { host, port }),
 }
 
 // Data APIs

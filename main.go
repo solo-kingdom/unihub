@@ -74,6 +74,9 @@ func main() {
 		r.Post("/", dsHandler.Create)
 		r.Post("/test", dsHandler.TestNewConnection)
 
+		// Aerospike 命名空间查询（必须放在 /{name} 之前）
+		r.Post("/aerospike/namespaces", dsHandler.QueryAerospikeNamespaces)
+
 		r.Route("/{name}", func(r chi.Router) {
 			r.Get("/", dsHandler.Get)
 			r.Put("/", dsHandler.Update)
