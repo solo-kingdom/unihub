@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/solo-kingdom/uniface/pkg/storage/kv"
 	"github.com/solo-kingdom/uniface/pkg/storage/kv/aerospike"
@@ -72,20 +73,27 @@ func createAerospikeStorage(config map[string]string) (KVStorage, error) {
 			return nil, fmt.Errorf("invalid port: %w", err)
 		}
 	}
-	namespace := config["namespace"]
-	if namespace == "" {
-		namespace = "test"
+	namespaceStr := config["namespace"]
+	if namespaceStr == "" {
+		namespaceStr = "test"
 	}
 	setName := config["set"]
 
-	instances := []*aerospike.Instance{
-		{
-			ID:        "default",
+	// Support comma-separated multiple namespaces (backward compatible with single value)
+	namespaces := strings.Split(namespaceStr, ",")
+	var instances []*aerospike.Instance
+	for i, ns := range namespaces {
+		ns = strings.TrimSpace(ns)
+		if ns == "" {
+			continue
+		}
+		instances = append(instances, &aerospike.Instance{
+			ID:        fmt.Sprintf("ns-%d", i),
 			Host:      host,
 			Port:      port,
-			Namespace: namespace,
+			Namespace: ns,
 			Set:       setName,
-		},
+		})
 	}
 
 	asStorage, err := aerospike.NewStorage(instances)

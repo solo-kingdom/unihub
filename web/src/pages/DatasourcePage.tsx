@@ -42,6 +42,10 @@ export default function DatasourcePage() {
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
 
+  // Namespace auto-fetch states (for Aerospike, populated on test connection)
+  const [namespaceOptions, setNamespaceOptions] = useState<{ value: string; label: string }[]>([])
+  const [namespaceLoading, setNamespaceLoading] = useState(false)
+
   // Filter states
   const [filterTypeId, setFilterTypeId] = useState<string>('')
   const [filterImplId, setFilterImplId] = useState<string>('')
@@ -105,6 +109,8 @@ export default function DatasourcePage() {
     setSelectedTypeId('')
     setSelectedImplId('')
     setTestResult(null)
+    setNamespaceOptions([])
+    setNamespaceLoading(false)
     form.resetFields()
     setModalOpen(true)
   }
@@ -114,23 +120,37 @@ export default function DatasourcePage() {
     setSelectedTypeId(ds.typeId)
     setSelectedImplId(ds.implId)
     setTestResult(null)
+    setNamespaceOptions([])
+    setNamespaceLoading(false)
 
-    // Reset and set all form values synchronously (Form is always mounted, no destroyOnHidden)
+    // Reset and set top-level fields synchronously (always in DOM)
     form.resetFields()
-    const values: Record<string, string> = {
+    form.setFieldsValue({
       name: ds.name,
       typeId: ds.typeId,
       implId: ds.implId,
-    }
-    const implMeta = findImplMeta(ds.typeId, ds.implId)
-    if (implMeta) {
-      implMeta.configFields.forEach((field) => {
-        values[`config_${field.name}`] = ds.config[field.name] || field.default || ''
-      })
-    }
-    form.setFieldsValue(values)
+    })
     setModalOpen(true)
   }
+
+  // Set config field values after Form.Items mount (avoids antd #57375 bug with preserve=false)
+  useEffect(() => {
+    if (modalOpen && editingDs && currentImplMeta) {
+      const configValues: Record<string, unknown> = {}
+      currentImplMeta.configFields.forEach((field) => {
+        const raw = editingDs.config[field.name] || field.default || ''
+        // For Aerospike namespace: store as array for multi-select
+        if (field.name === 'namespace' && selectedImplId === 'aerospike') {
+          configValues[`config_${field.name}`] = raw
+            ? raw.split(',').map((s: string) => s.trim()).filter(Boolean)
+            : []
+        } else {
+          configValues[`config_${field.name}`] = raw
+        }
+      })
+      form.setFieldsValue(configValues)
+    }
+  }, [modalOpen, editingDs, currentImplMeta, form, selectedImplId])
 
   const handleSubmit = async () => {
     try {
@@ -140,7 +160,14 @@ export default function DatasourcePage() {
       if (implMeta) {
         implMeta.configFields.forEach((field) => {
           const val = values[`config_${field.name}`]
-          if (val !== undefined && val !== '') {
+          if (field.name === 'namespace') {
+            // Convert Select multiple/tags array to comma-separated string for storage
+            if (Array.isArray(val) && val.length > 0) {
+              config[field.name] = val.join(',')
+            } else if (val && !Array.isArray(val)) {
+              config[field.name] = String(val)
+            }
+          } else if (val !== undefined && val !== '') {
             config[field.name] = String(val)
           }
         })
@@ -185,7 +212,13 @@ export default function DatasourcePage() {
       if (implMeta) {
         implMeta.configFields.forEach((field) => {
           const val = values[`config_${field.name}`]
-          if (val !== undefined && val !== '') {
+          if (field.name === 'namespace') {
+            if (Array.isArray(val) && val.length > 0) {
+              config[field.name] = val.join(',')
+            } else if (val && !Array.isArray(val)) {
+              config[field.name] = String(val)
+            }
+          } else if (val !== undefined && val !== '') {
             config[field.name] = String(val)
           }
         })
@@ -198,17 +231,34 @@ export default function DatasourcePage() {
       // For Aerospike: also query available namespaces on successful connection
       let resultMsg = res.data.message
       if (res.data.success && values.implId === 'aerospike') {
+        setNamespaceLoading(true)
         try {
           const nsRes = await datasourceApi.queryAerospikeNamespaces(
             String(config.host || 'localhost'),
             parseInt(String(config.port || '3000'))
           )
-          const nss = nsRes.data?.namespaces
-          if (nss && nss.length > 0) {
+          const nss: string[] = nsRes.data?.namespaces || []
+          const opts = nss.map((ns: string) => ({ value: ns, label: ns }))
+
+          // Keep saved namespaces as options if not in query results
+          const savedNs = editingDs?.config?.namespace || values.config_namespace
+          if (savedNs) {
+            savedNs.split(',').forEach((ns: string) => {
+              const trimmed = ns.trim()
+              if (trimmed && !opts.find(o => o.value === trimmed)) {
+                opts.push({ value: trimmed, label: `${trimmed}（已保存）` })
+              }
+            })
+          }
+          setNamespaceOptions(opts)
+          if (nss.length > 0) {
             resultMsg += ` — 可用命名空间: ${nss.join(', ')}`
           }
         } catch {
           // namespace query failed, keep original message
+          setNamespaceOptions([])
+        } finally {
+          setNamespaceLoading(false)
         }
       }
 
@@ -334,7 +384,7 @@ export default function DatasourcePage() {
         width={560}
         okText={editingDs ? '更新' : '创建'}
       >
-        <Form form={form} layout="vertical" preserve={false}>
+        <Form form={form} layout="vertical">
           <Form.Item
             name="name"
             label="名称"
@@ -382,6 +432,8 @@ export default function DatasourcePage() {
               onChange={(val) => {
                 setSelectedImplId(val)
                 setTestResult(null)
+                setNamespaceOptions([])
+                setNamespaceLoading(false)
               }}
               disabled={!!editingDs || !selectedTypeId}
             >
@@ -393,25 +445,57 @@ export default function DatasourcePage() {
             </Select>
           </Form.Item>
 
-          {currentImplMeta && currentImplMeta.configFields.map((field) => (
-            <Form.Item
-              key={field.name}
-              name={`config_${field.name}`}
-              label={field.label}
-              rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
-            >
-              {field.type === 'number' ? (
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder={field.placeholder || `请输入${field.label}`}
-                />
-              ) : field.type === 'password' ? (
-                <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
-              ) : (
-                <Input placeholder={field.placeholder || `请输入${field.label}`} />
-              )}
-            </Form.Item>
-          ))}
+          {currentImplMeta && currentImplMeta.configFields.map((field) => {
+            // Aerospike namespace: multi-select driven by test connection results
+            if (selectedImplId === 'aerospike' && field.name === 'namespace') {
+              return (
+                <Form.Item
+                  key={field.name}
+                  name={`config_${field.name}`}
+                  label={field.label}
+                  rules={field.required ? [{ required: true, message: `请选择${field.label}` }] : []}
+                >
+                  {namespaceOptions.length > 0 ? (
+                    <Select
+                      mode="multiple"
+                      placeholder="请选择命名空间"
+                      loading={namespaceLoading}
+                      options={namespaceOptions}
+                      filterOption={(input, option) =>
+                        (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
+                      }
+                    />
+                  ) : (
+                    <Select
+                      mode="tags"
+                      placeholder="输入命名空间（回车添加多个）"
+                      loading={namespaceLoading}
+                    />
+                  )}
+                </Form.Item>
+              )
+            }
+
+            return (
+              <Form.Item
+                key={field.name}
+                name={`config_${field.name}`}
+                label={field.label}
+                rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : []}
+              >
+                {field.type === 'number' ? (
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    placeholder={field.placeholder || `请输入${field.label}`}
+                  />
+                ) : field.type === 'password' ? (
+                  <Input.Password placeholder={field.placeholder || `请输入${field.label}`} />
+                ) : (
+                  <Input placeholder={field.placeholder || `请输入${field.label}`} />
+                )}
+              </Form.Item>
+            )
+          })}
 
           {currentImplMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>

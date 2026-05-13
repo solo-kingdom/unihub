@@ -52,6 +52,9 @@ export default function DataQueryPage() {
   const [namespaceLoading, setNamespaceLoading] = useState(false)
   const namespaceDebounceRef = useRef<ReturnType<typeof setTimeout>>(null)
 
+  // Active namespace for Aerospike (switches independently from saved config)
+  const [activeNamespace, setActiveNamespace] = useState<string>('')
+
   // Derive full datasource object for config access
   const selectedDatasource = datasources.find((d) => d.name === selectedDs)
 
@@ -88,10 +91,15 @@ export default function DataQueryPage() {
     setSearchPattern('')
     setConnectionStatus(null)
     setNamespaceOptions([])
+    setActiveNamespace('')
     fetchKeys(name)
 
     const ds = datasources.find((d) => d.name === name)
     if (!ds) return
+
+    // Set active namespace for Aerospike (first namespace or full value)
+    const savedNs = ds.config.namespace || ''
+    setActiveNamespace(savedNs.includes(',') ? savedNs.split(',')[0].trim() : savedNs)
 
     // Test connection for Aerospike datasources
     if (ds.implId === 'aerospike') {
@@ -114,10 +122,15 @@ export default function DataQueryPage() {
           try {
             const nsRes = await datasourceApi.queryAerospikeNamespaces(host, port)
             const opts = (nsRes.data?.namespaces || []).map((ns: string) => ({ value: ns, label: ns }))
-            // Keep saved namespace as option if not in results
+            // Keep saved namespaces as option if not in results (supports comma-separated multi-value)
             const savedNs = ds.config.namespace
-            if (savedNs && !opts.find(o => o.value === savedNs)) {
-              opts.push({ value: savedNs, label: `${savedNs}（已保存）` })
+            if (savedNs) {
+              savedNs.split(',').forEach((ns: string) => {
+                const trimmed = ns.trim()
+                if (trimmed && !opts.find(o => o.value === trimmed)) {
+                  opts.push({ value: trimmed, label: `${trimmed}（已保存）` })
+                }
+              })
             }
             setNamespaceOptions(opts)
           } catch {
@@ -295,8 +308,12 @@ export default function DataQueryPage() {
                   style={{ width: 180 }}
                   placeholder="命名空间"
                   loading={namespaceLoading}
-                  value={selectedDatasource.config.namespace || undefined}
+                  value={activeNamespace || undefined}
                   options={namespaceOptions}
+                  onChange={(val) => {
+                    setActiveNamespace(val)
+                    fetchKeys(selectedDs)
+                  }}
                   filterOption={(input, option) =>
                     (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
                   }
@@ -304,7 +321,7 @@ export default function DataQueryPage() {
               ) : (
                 <Tag color="purple">
                   {namespaceLoading ? <Spin size="small" /> : null}
-                  ns: {selectedDatasource.config.namespace || '(未设置)'}
+                  ns: {activeNamespace || selectedDatasource.config.namespace || '(未设置)'}
                 </Tag>
               )}
               {connectionLoading ? (
