@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/solo-kingdom/unihub/internal/model"
 	"github.com/solo-kingdom/unihub/internal/service"
@@ -170,6 +172,79 @@ func (h *DatasourceHandler) QueryAerospikeNamespaces(w http.ResponseWriter, r *h
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"namespaces": namespaces,
+	})
+}
+
+// HandleAerospikeMeta 查询 Aerospike 元信息 GET /api/v1/datasources/{name}/aerospike/meta
+func (h *DatasourceHandler) HandleAerospikeMeta(w http.ResponseWriter, r *http.Request) {
+	name := getURLParam(r, "name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "name 参数不能为空")
+		return
+	}
+
+	// 解析 ?info= 参数（逗号分隔）
+	infoParam := r.URL.Query().Get("info")
+	var infoTypes []string
+	if infoParam != "" {
+		for _, t := range strings.Split(infoParam, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				infoTypes = append(infoTypes, t)
+			}
+		}
+	}
+
+	meta, err := h.svc.QueryAerospikeMeta(name, infoTypes)
+	if err != nil {
+		// 判断是否是 "不是 Aerospike 实现" 的错误
+		if strings.Contains(err.Error(), "不是 Aerospike 实现") {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "不存在") {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "connection_failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, meta)
+}
+
+// HandleAerospikeSample 采样查询 Aerospike 数据 GET /api/v1/datasources/{name}/aerospike/sample
+func (h *DatasourceHandler) HandleAerospikeSample(w http.ResponseWriter, r *http.Request) {
+	name := getURLParam(r, "name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "name 参数不能为空")
+		return
+	}
+
+	// 解析 ?limit= 参数
+	limit := 20
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	items, err := h.svc.QueryAerospikeSample(name, limit)
+	if err != nil {
+		if strings.Contains(err.Error(), "不是 Aerospike 实现") {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		if strings.Contains(err.Error(), "不存在") {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		writeError(w, http.StatusBadGateway, "connection_failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"items": items,
 	})
 }
 

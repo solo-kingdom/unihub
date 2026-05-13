@@ -83,6 +83,11 @@ func main() {
 			r.Delete("/", dsHandler.Delete)
 			r.Post("/test", dsHandler.TestConnection)
 
+			// Aerospike 元信息查询
+			r.Get("/aerospike/meta", dsHandler.HandleAerospikeMeta)
+			// Aerospike 示例数据采样
+			r.Get("/aerospike/sample", dsHandler.HandleAerospikeSample)
+
 			// 数据操作
 			r.Get("/keys/random", dataHandler.RandomKey)
 			r.Get("/keys", dataHandler.ListKeys)

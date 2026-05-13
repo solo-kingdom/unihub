@@ -240,6 +240,11 @@ export default function DatasourcePage() {
           const nss: string[] = nsRes.data?.namespaces || []
           const opts = nss.map((ns: string) => ({ value: ns, label: ns }))
 
+          // Auto-select all queried namespaces in the form field
+          if (nss.length > 0) {
+            form.setFieldValue('config_namespace', nss)
+          }
+
           // Keep saved namespaces as options if not in query results
           const savedNs = editingDs?.config?.namespace || values.config_namespace
           if (savedNs) {
@@ -296,6 +301,23 @@ export default function DatasourcePage() {
       render: (implId: string) => (
         <Tag color={implColors[implId] || 'default'}>{implMap[implId] || implId}</Tag>
       ),
+      width: 110,
+    },
+    {
+      title: '命名空间',
+      key: 'namespace',
+      width: 130,
+      ellipsis: true,
+      render: (_: unknown, record: Datasource) =>
+        record.implId === 'aerospike' ? (record.config.namespace || '-') : '-',
+    },
+    {
+      title: 'Set',
+      key: 'set',
+      width: 100,
+      ellipsis: true,
+      render: (_: unknown, record: Datasource) =>
+        record.implId === 'aerospike' ? (record.config.set || '-') : '-',
     },
     {
       title: '创建时间',

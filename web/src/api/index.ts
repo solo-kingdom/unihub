@@ -82,6 +82,14 @@ export const dataApi = {
     api.get<{ key: string }>(`/datasources/${dsName}/keys/random`),
   exists: (dsName: string, key: string) =>
     api.head(`/datasources/${dsName}/data`, { params: { key } }),
+  queryAerospikeMeta: (dsName: string, info?: string) =>
+    api.get<Record<string, unknown>>(`/datasources/${dsName}/aerospike/meta`, {
+      params: info ? { info } : undefined,
+    }),
+  queryAerospikeSample: (dsName: string, limit?: number) =>
+    api.get<{ items: Array<{ key: string; value: unknown }> }>(`/datasources/${dsName}/aerospike/sample`, {
+      params: limit ? { limit } : undefined,
+    }),
 }
 
 export default api
