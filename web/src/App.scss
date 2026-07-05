@@ -1,0 +1,194 @@
+@use './styles/variables' as *;
+
+.unihub-layout {
+  // CSS Custom Properties
+  --unihub-sider-width: #{$sider-width-expanded};
+  --unihub-sider-collapsed: #{$sider-width-collapsed};
+  --unihub-page-pad: #{$page-padding};
+  --unihub-sider-bg: #{$sider-bg};
+  --unihub-sider-text: #{$sider-text};
+  --unihub-sider-text-hover: #{$sider-text-hover};
+  --unihub-card-bg: #{$sider-bg};
+  --unihub-border: #{$warm-border};
+  --unihub-shadow: #{$warm-shadow};
+  --unihub-hover-bg: #{$menu-hover-bg};
+  --unihub-selected-bg: #{$menu-selected-bg};
+
+  height: 100vh;
+  box-sizing: border-box;
+  padding: $page-padding;
+  display: flex;
+  gap: $card-gap;
+  background: linear-gradient(135deg, #fff7ef 0%, #fdf3e7 45%, #f7eadc 100%);
+  overflow: hidden;
+}
+
+// Shared container style
+.unihub-sidebar,
+.unihub-content,
+.unihub-overlay-sidebar {
+  border: 1px solid var(--unihub-border);
+  border-radius: $card-radius;
+  background: var(--unihub-card-bg);
+  box-shadow: var(--unihub-shadow);
+}
+
+.unihub-sidebar {
+  &.unihub-sidebar-expanded { width: var(--unihub-sider-width); }
+  &.unihub-sidebar-collapsed { width: var(--unihub-sider-collapsed); }
+
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--unihub-sider-bg);
+  transition: width 250ms ease;
+}
+
+.unihub-sidebar-logo,
+.unihub-overlay-logo {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--unihub-sider-text);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.unihub-sidebar-logo {
+  &.unihub-logo-collapsed { font-size: 16px; }
+  &.unihub-logo-expanded { font-size: 20px; }
+}
+
+.unihub-overlay-logo {
+  font-size: 20px;
+}
+
+.unihub-content {
+  flex: 1;
+  min-width: 0;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  background: var(--unihub-card-bg);
+}
+
+// Controls — expanded mode
+.unihub-controls-expanded {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--unihub-border);
+  color: var(--unihub-sider-text);
+}
+
+// Controls — icon-only mode
+.unihub-controls-icon {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+  border-top: 1px solid var(--unihub-border);
+  align-items: center;
+  color: var(--unihub-sider-text);
+}
+
+.unihub-icon-control-btn {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--unihub-sider-text);
+}
+
+// Hidden mode — edge trigger
+.unihub-edge-trigger {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 100vh;
+  z-index: 999;
+}
+
+// Hidden mode — overlay sidebar
+.unihub-overlay-sidebar {
+  position: fixed;
+  left: $page-padding;
+  top: $page-padding;
+  height: calc(100vh - #{$page-padding * 2});
+  width: var(--unihub-sider-width);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  background: var(--unihub-sider-bg);
+  transform: translateX(calc(-1 * (var(--unihub-sider-width) + var(--unihub-page-pad))));
+  transition: transform 250ms ease;
+
+  &.unihub-overlay-visible {
+    transform: translateX(0);
+  }
+}
+
+// Collapsed menu overrides
+.unihub-layout .ant-menu-inline-collapsed {
+  width: 100% !important;
+}
+
+.unihub-layout .ant-menu-inline-collapsed > .ant-menu-item {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  padding: 0 !important;
+  padding-inline: 0 !important;
+  margin-inline: 0 !important;
+  width: 100% !important;
+}
+
+.unihub-layout .ant-menu-inline-collapsed .anticon {
+  margin-inline-end: 0 !important;
+  font-size: 16px;
+}
+
+// Menu hover / selected overrides
+.unihub-layout .ant-menu-item:hover {
+  background: var(--unihub-hover-bg) !important;
+}
+
+.unihub-layout .ant-menu-item-selected {
+  background: var(--unihub-selected-bg) !important;
+}
+
+// FAB button
+.unihub-show-fab.ant-btn {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 1001;
+  border-radius: 10px;
+  width: $fab-size;
+  height: $fab-size;
+  border: 1px solid #e6d7c4;
+  background: #fff;
+  color: var(--unihub-sider-text);
+  opacity: 0.56;
+  box-shadow: 0 8px 20px rgba(120, 84, 38, 0.12);
+  transition: opacity 0.3s ease, transform 0.2s ease, box-shadow 0.2s ease;
+
+  &.unihub-fab-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  &:hover,
+  &:focus-visible {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+}

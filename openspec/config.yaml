@@ -1,0 +1,17 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+context: |
+  Unihub 是基于 Uniface 的数据源管理、查询工具平台。
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+rules:
+  proposal:
+    - 优先使用简体中文
+  tasks:
+    - 优先使用简体中文
